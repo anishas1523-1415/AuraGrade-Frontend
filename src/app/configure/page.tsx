@@ -129,8 +129,9 @@ export default function RubricUploadPage() {
           const data = await res.json();
           setAssessments(data);
         }
-      } catch {
-        // silently fail
+      } catch (err) {
+        console.error("Failed to load assessments:", err);
+        setSyncResult({ success: false, message: `Cannot reach backend at ${API_URL}. Is NEXT_PUBLIC_API_URL set?` });
       }
     };
     fetchAssessments();
@@ -292,9 +293,13 @@ export default function RubricUploadPage() {
         setNewSubject("");
         setNewTitle("");
         setShowCreateForm(false);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setSyncResult({ success: false, message: `Create failed: ${err.detail || res.statusText}` });
       }
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.error("Create assessment failed:", err);
+      setSyncResult({ success: false, message: `Cannot reach backend at ${API_URL}. Check your connection.` });
     } finally {
       setCreatingAssessment(false);
     }
