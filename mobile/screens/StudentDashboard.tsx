@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,65 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Animated,
 } from "react-native";
+
+/* ── Skeleton Loader ─────────────────────────────────────────
+ * Gray pulsing boxes that show instantly while the GET request
+ * runs, so Arun never sees a blank white screen.              */
+function SkeletonBox({ width, height, style }: { width: number | string; height: number; style?: any }) {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[
+        { width, height, backgroundColor: "#E2E8F0", borderRadius: 10, opacity },
+        style,
+      ]}
+    />
+  );
+}
+
+function ResultSkeleton() {
+  return (
+    <View style={styles.resultCard}>
+      {/* Score skeleton */}
+      <View style={[styles.scoreHeader, { gap: 10 }]}>
+        <SkeletonBox width={120} height={18} />
+        <SkeletonBox width={160} height={52} />
+      </View>
+      {/* Question skeletons */}
+      {[1, 2, 3].map((i) => (
+        <View key={i} style={[styles.questionBox, { gap: 8 }]}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+            <SkeletonBox width={60} height={16} />
+            <SkeletonBox width={50} height={16} />
+          </View>
+          <SkeletonBox width="100%" height={14} />
+          <SkeletonBox width="80%" height={14} />
+        </View>
+      ))}
+      {/* Feedback skeleton */}
+      <View style={[styles.justificationBox, { gap: 8 }]}>
+        <SkeletonBox width={180} height={18} />
+        <SkeletonBox width="100%" height={14} />
+        <SkeletonBox width="100%" height={14} />
+        <SkeletonBox width="60%" height={14} />
+      </View>
+    </View>
+  );
+}
 
 // ⚠️  Replace with your computer's local IPv4 address.
 //     Run `ipconfig` (Windows) or `ifconfig` (Mac/Linux) to find it.
@@ -80,6 +138,9 @@ export default function StudentDashboard() {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* ── Skeleton Loader (while fetching) ──────────────── */}
+      {loading && !result && <ResultSkeleton />}
 
       {/* ── Results Card ───────────────────────────────────── */}
       {result && (
