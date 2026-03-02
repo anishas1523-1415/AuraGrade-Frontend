@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import imageCompression from "browser-image-compression";
+import { useDropzone } from "react-dropzone";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -182,12 +183,51 @@ export default function EvaluationDashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
+  // ── Batch mode state ────────────────────────────────────────
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchJobId, setBatchJobId] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState<number>(0);
+  const [batchTotal, setBatchTotal] = useState<number>(0);
+  const [batchResult, setBatchResult] = useState<Record<string, unknown> | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── react-dropzone for batch mode ───────────────────────────
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: (acceptedFiles) => {
+      if (acceptedFiles.length > 0) {
+        setBatchFiles((prev) => [...prev, ...acceptedFiles].slice(0, 20));
+        setBatchMode(true);
+        setEvaluationData(null);
+        setBatchResult(null);
+        setStreamLog([]);
+      }
+    },
+    accept: { "image/*": [], "application/pdf": [] },
+    multiple: true,
+    maxFiles: 20,
+    maxSize: 15 * 1024 * 1024, // 15 MB per file
+    noClick: false,
+    noKeyboard: false,
+  });
+
+  const removeBatchFile = useCallback((index: number) => {
+    setBatchFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
   // Auto-scroll the terminal log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [streamLog]);
 
-  // Handle file selection + preview
+  // Handle file selection + preview (single mode)
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selected = e.target.files[0];
@@ -196,10 +236,14 @@ export default function EvaluationDashboard() {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(selected));
       setEvaluationData(null);
+      setBatchResult(null);
       setStreamLog([]);
       setCurrentPhase("");
+      setBatchMode(false);
     }
   }, [previewUrl]);
+
+
 
   // The core SSE streaming evaluation call
   const startEvaluation = useCallback(async () => {
@@ -315,7 +359,96 @@ export default function EvaluationDashboard() {
     }
   }, [file]);
 
-  return (
+  // ── Batch evaluation with job polling ───────────────────────
+  const startBatchEvaluation = useCallback(async () => {
+    if (batchFiles.length === 0) return;
+
+    setIsEvaluating(true);
+    setBatchResult(null);
+    setEvaluationData(null);
+    setBatchProgress(0);
+    setStreamLog([
+      { icon: "🚀", text: `Starting batch evaluation for ${batchFiles.length} file(s)…`, phase: "init" },
+    ]);
+
+    const formData = new FormData();
+    for (const f of batchFiles) {
+      formData.append("files", f);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/evaluate-batch`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(err.detail || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const jobId = data.job_id;
+      setBatchJobId(jobId);
+      setBatchTotal(data.total_pages);
+      setStreamLog((prev) => [
+        ...prev,
+        { icon: "📋", text: `Job ${jobId} created — ${data.total_pages} pages queued`, phase: "batch" },
+      ]);
+
+      // ── Poll for progress ────────────────────────────────
+      pollingRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_URL}/api/batch-status/${jobId}`);
+          if (!statusRes.ok) return;
+          const status = await statusRes.json();
+
+          setBatchProgress(status.processed_pages);
+          setStreamLog((prev) => {
+            // Update the last progress line instead of appending
+            const filtered = prev.filter((s) => s.phase !== "progress");
+            return [
+              ...filtered,
+              {
+                icon: "⏳",
+                text: `Progress: ${status.processed_pages}/${status.total_pages} pages (${status.progress_percent}%)`,
+                phase: "progress",
+              },
+            ];
+          });
+
+          if (status.status === "completed" || status.status === "failed") {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            pollingRef.current = null;
+
+            if (status.status === "completed" && status.result) {
+              setBatchResult(status.result);
+              setStreamLog((prev) => [
+                ...prev.filter((s) => s.phase !== "progress"),
+                { icon: "✅", text: `Batch complete — ${status.result.pages_graded} pages graded`, phase: "done" },
+              ]);
+            } else {
+              setStreamLog((prev) => [
+                ...prev,
+                { icon: "❌", text: `Batch failed: ${status.errors?.join(", ") || "Unknown error"}`, phase: "error" },
+              ]);
+            }
+
+            setIsEvaluating(false);
+          }
+        } catch {
+          // Polling error — keep trying
+        }
+      }, 3000);
+    } catch (error) {
+      console.error("Batch evaluation failed:", error);
+      setStreamLog((prev) => [
+        ...prev,
+        { icon: "❌", text: `Batch failed: ${error instanceof Error ? error.message : "Unknown error"}`, phase: "error" },
+      ]);
+      setIsEvaluating(false);
+    }
+  }, [batchFiles]);  return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-sans">
       <div className="max-w-5xl mx-auto bg-white shadow-xl rounded-2xl overflow-hidden border border-gray-100">
         {/* ── Header ───────────────────────────────────────────── */}
@@ -330,8 +463,15 @@ export default function EvaluationDashboard() {
                   Reg No:{" "}
                   <span className="font-mono text-blue-400 font-semibold">
                     {evaluationData.registration_number}
+                  </span>
+                </>
+              ) : batchResult ? (
+                <>
+                  Reg No:{" "}
+                  <span className="font-mono text-blue-400 font-semibold">
+                    {(batchResult as Record<string, unknown>).registration_number as string}
                   </span>{" "}
-                  | Subject: Data Science
+                  | Batch Mode ({(batchResult as Record<string, unknown>).pages_graded as number} pages)
                 </>
               ) : (
                 "Sovereign AI-Powered Examination Grading"
@@ -351,50 +491,147 @@ export default function EvaluationDashboard() {
               </div>
             </div>
           )}
+          {batchResult && !evaluationData && (
+            <div className="text-left sm:text-right">
+              <div className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                Aggregated Score
+              </div>
+              <div className="text-5xl font-black text-emerald-400">
+                {(batchResult as Record<string, unknown>).score as number}
+                <span className="text-2xl text-slate-500">/{(batchResult as Record<string, unknown>).max_marks as number}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Upload Controls ──────────────────────────────────── */}
         <div className="p-6 sm:p-8 border-b border-gray-200 bg-gray-50">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-            />
+          {/* Mode toggle */}
+          <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="px-4 py-2 bg-slate-200 text-slate-800 font-semibold rounded-lg hover:bg-slate-300 transition text-sm"
+              onClick={() => { setBatchMode(false); setBatchFiles([]); setBatchResult(null); }}
+              className={`px-3 py-1 text-sm font-semibold rounded-lg transition ${!batchMode ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600 hover:bg-slate-300"}`}
             >
-              {file ? `📄 ${file.name}` : "Select Exam Image"}
+              Single Image
             </button>
             <button
-              onClick={startEvaluation}
-              disabled={!file || isEvaluating}
-              className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition text-sm"
+              onClick={() => { setBatchMode(true); setFile(null); setEvaluationData(null); }}
+              className={`px-3 py-1 text-sm font-semibold rounded-lg transition ${batchMode ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600 hover:bg-slate-300"}`}
             >
-              {isEvaluating ? (
-                <span className="flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Evaluating…
-                </span>
-              ) : (
-                "Run AI Evaluation"
-              )}
+              Batch Upload
             </button>
-            {currentPhase && isEvaluating && (
-              <span className="text-xs text-slate-500 font-mono">
-                Phase: {currentPhase}
-              </span>
-            )}
           </div>
 
-          {/* Image preview */}
-          {previewUrl && !evaluationData && (
+          {!batchMode ? (
+            /* ── Single file mode ─────────────────────────────── */
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 bg-slate-200 text-slate-800 font-semibold rounded-lg hover:bg-slate-300 transition text-sm"
+              >
+                {file ? `📄 ${file.name}` : "Select Exam Image"}
+              </button>
+              <button
+                onClick={startEvaluation}
+                disabled={!file || isEvaluating}
+                className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition text-sm"
+              >
+                {isEvaluating ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Evaluating…
+                  </span>
+                ) : (
+                  "Run AI Evaluation"
+                )}
+              </button>
+              {currentPhase && isEvaluating && (
+                <span className="text-xs text-slate-500 font-mono">
+                  Phase: {currentPhase}
+                </span>
+              )}
+            </div>
+          ) : (
+            /* ── Batch upload mode (react-dropzone) ──────────── */
+            <div>
+              {/* Dropzone powered by react-dropzone */}
+              <div
+                {...getRootProps()}
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                  isDragActive
+                    ? "border-blue-500 bg-blue-50 scale-[1.01]"
+                    : "border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50"
+                }`}
+              >
+                <input {...getInputProps()} />
+                <div className="text-4xl mb-2">{isDragActive ? "📥" : "📄"}</div>
+                <p className="text-slate-600 font-medium">
+                  {isDragActive ? "Drop files here" : "Drag & drop images or PDFs here"}
+                </p>
+                <p className="text-slate-400 text-sm mt-1">
+                  or click to browse · Max 20 files · 15 MB each
+                </p>
+              </div>
+
+              {/* File list */}
+              {batchFiles.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-700">
+                      {batchFiles.length} file{batchFiles.length !== 1 ? "s" : ""} selected
+                    </span>
+                    <button
+                      onClick={() => setBatchFiles([])}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {batchFiles.map((f, i) => (
+                      <div key={i} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-sm">
+                        <span className="truncate text-slate-700">
+                          {f.type === "application/pdf" ? "📄" : "🖼️"} {f.name}
+                          <span className="text-slate-400 ml-2">({(f.size / 1024 / 1024).toFixed(1)}MB)</span>
+                        </span>
+                        <button onClick={() => removeBatchFile(i)} className="text-red-400 hover:text-red-600 ml-2 text-lg leading-none">&times;</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={startBatchEvaluation}
+                    disabled={isEvaluating}
+                    className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition text-sm w-full sm:w-auto"
+                  >
+                    {isEvaluating ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Grading {batchProgress}/{batchTotal} pages…
+                      </span>
+                    ) : (
+                      `Grade ${batchFiles.length} File${batchFiles.length !== 1 ? "s" : ""}`
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Image preview (single mode) */}
+          {!batchMode && previewUrl && !evaluationData && (
             <div className="mt-4">
               <img
                 src={previewUrl}
@@ -406,7 +643,7 @@ export default function EvaluationDashboard() {
         </div>
 
         {/* ── Live Terminal / Stream Logs ───────────────────────── */}
-        {streamLog.length > 0 && !evaluationData && (
+        {streamLog.length > 0 && !evaluationData && !batchResult && (
           <div className="bg-slate-950 text-green-400 font-mono text-sm p-6 max-h-72 overflow-y-auto">
             {streamLog.map((step, index) => (
               <div key={index} className="py-0.5 flex items-start gap-2">
@@ -420,6 +657,36 @@ export default function EvaluationDashboard() {
                 <span className="animate-pulse">▌</span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Batch Progress Bar ───────────────────────────────── */}
+        {batchMode && isEvaluating && batchTotal > 0 && (
+          <div className="w-full max-w-md mx-auto mt-0 p-6 bg-white border-b border-slate-100">
+            <div className="flex justify-between mb-2">
+              <span className="text-sm font-semibold text-slate-700">
+                AI Analyzing Pages…
+              </span>
+              <span className="text-sm font-bold text-blue-600">
+                {batchTotal > 0 ? Math.round((batchProgress / batchTotal) * 100) : 0}%
+              </span>
+            </div>
+
+            {/* Track */}
+            <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+              {/* Moving bar */}
+              <div
+                className="bg-blue-600 h-full rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(37,99,235,0.5)]"
+                style={{ width: `${batchTotal > 0 ? Math.round((batchProgress / batchTotal) * 100) : 0}%` }}
+              >
+                {/* Animated shine effect */}
+                <div className="w-full h-full animate-pulse bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-slate-500 text-center italic">
+              Converting PDFs and running Vision OCR… ({batchProgress}/{batchTotal} pages)
+            </p>
           </div>
         )}
 
@@ -584,6 +851,80 @@ export default function EvaluationDashboard() {
             </div>
           </>
         )}
+
+        {/* ── Batch Results Dashboard ──────────────────────────── */}
+        {batchResult && !evaluationData && (() => {
+          const br = batchResult as Record<string, unknown>;
+          const questions = (br.questions || []) as Array<Record<string, unknown>>;
+          const feedback = (br.feedback || []) as string[];
+          return (
+            <>
+              <div className="p-4 sm:p-8 space-y-6">
+                {/* Overview cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-black text-blue-700">{br.score as number}</div>
+                    <div className="text-xs text-blue-500 font-semibold">/ {br.max_marks as number}</div>
+                    <div className="text-xs text-slate-500 mt-1">Total Score</div>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-black text-emerald-700">{br.pages_graded as number}</div>
+                    <div className="text-xs text-slate-500 mt-1">Pages Graded</div>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-black text-purple-700">
+                      {(((br.confidence as number) || 0) * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">Confidence</div>
+                  </div>
+                  <div className={`border rounded-xl p-4 text-center ${br.is_flagged ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"}`}>
+                    <div className="text-2xl font-black">{br.is_flagged ? "🚩" : "✅"}</div>
+                    <div className="text-xs text-slate-500 mt-1">{br.is_flagged ? "Flagged" : "Clean"}</div>
+                  </div>
+                </div>
+
+                {/* Questions breakdown */}
+                {questions.length > 0 && (
+                  <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">
+                      Question Breakdown (All Pages)
+                    </h3>
+                    <ul className="space-y-3">
+                      {questions.map((q, idx) => (
+                        <li key={idx} className="flex justify-between items-center text-sm">
+                          <span className="text-slate-700 font-medium truncate mr-4">
+                            {(q.label as string) || (q.question as string) || `Question ${idx + 1}`}
+                          </span>
+                          <span className="font-bold text-blue-600 whitespace-nowrap">
+                            {q.score as number} / {q.max_marks as number || q.max as number || "?"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Feedback */}
+                {feedback.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-100 p-5 rounded-xl">
+                    <h3 className="text-lg font-bold text-slate-800 mb-2">Feedback</h3>
+                    <ul className="list-disc pl-5 text-slate-600 text-sm space-y-1">
+                      {feedback.map((fb, idx) => (
+                        <li key={idx}>{typeof fb === "string" ? fb : JSON.stringify(fb)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 px-8 py-4 flex justify-between items-center text-xs text-slate-400">
+                <span>AuraGrade v2 • Batch Processing Engine</span>
+                <span>Job: {batchJobId} • {br.pages_graded as number} pages aggregated</span>
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
