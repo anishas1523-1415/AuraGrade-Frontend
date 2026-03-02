@@ -11,8 +11,10 @@ import {
   Cpu,
   Loader2,
   CheckCircle2,
+  Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { downloadPDF, type ReportRow } from "@/lib/report-export";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -346,6 +348,34 @@ export const FinalizeGrades: React.FC<FinalizeGradesProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ── Download Sealed Report ── */}
+        {isFinalized && (
+          <div className="mt-6 flex justify-center">
+            <button
+              onClick={() => {
+                const row: ReportRow = {
+                  studentId: "INSTITUTION",
+                  assessment: assessmentLabel ?? assessmentId,
+                  totalMarks: totalScripts,
+                  maxMarks: "N/A",
+                  confidence: "100",
+                  feedback: `Sealed by ${lockedBy || "Admin"} on ${lockedAt ? new Date(lockedAt).toLocaleString() : "N/A"}. SHA-256: ${digitalHash.slice(0, 16)}…`,
+                  date: lockedAt ? new Date(lockedAt).toLocaleDateString() : new Date().toLocaleDateString(),
+                };
+                downloadPDF(
+                  [row],
+                  `Institutional Seal — ${assessmentLabel ?? assessmentId}`,
+                  `AuraGrade_Seal_${assessmentId.slice(0, 8)}.pdf`,
+                );
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-500 transition text-sm shadow-lg shadow-emerald-500/20"
+            >
+              <Download className="h-4 w-4" />
+              Download Sealed Report (PDF)
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import imageCompression from "browser-image-compression";
 import { useDropzone } from "react-dropzone";
+import { downloadCSV, downloadPDF, type ReportRow } from "@/lib/report-export";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -844,10 +845,45 @@ export default function EvaluationDashboard() {
               </div>
             </div>
 
-            {/* ── Footer ───────────────────────────────────────── */}
-            <div className="bg-slate-50 border-t border-slate-200 px-8 py-4 flex justify-between items-center text-xs text-slate-400">
+            {/* ── Footer + Export buttons ──────────────────────── */}
+            <div className="bg-slate-50 border-t border-slate-200 px-8 py-4 flex flex-wrap justify-between items-center gap-3 text-xs text-slate-400">
               <span>AuraGrade v2 • Sovereign AI Grading Engine</span>
-              <span>3-Pass Agentic Pipeline • Pinecone RAG • Gemini Vision</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const row: ReportRow = {
+                      studentId: evaluationData.registration_number,
+                      assessment: "Single Evaluation",
+                      totalMarks: evaluationData.score,
+                      maxMarks: 15,
+                      confidence: evaluationData.confidence != null ? (evaluationData.confidence * 100) : undefined,
+                      feedback: evaluationData.justification_note || "",
+                      date: new Date().toLocaleDateString(),
+                    };
+                    downloadCSV([row]);
+                  }}
+                  className="px-3 py-1.5 bg-slate-200 text-slate-700 font-semibold rounded-lg hover:bg-slate-300 transition text-xs"
+                >
+                  📥 CSV
+                </button>
+                <button
+                  onClick={() => {
+                    const row: ReportRow = {
+                      studentId: evaluationData.registration_number,
+                      assessment: "Single Evaluation",
+                      totalMarks: evaluationData.score,
+                      maxMarks: 15,
+                      confidence: evaluationData.confidence != null ? (evaluationData.confidence * 100) : undefined,
+                      feedback: evaluationData.justification_note || "",
+                      date: new Date().toLocaleDateString(),
+                    };
+                    downloadPDF([row], `Report — ${evaluationData.registration_number}`);
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition text-xs"
+                >
+                  📄 PDF Report
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -917,10 +953,65 @@ export default function EvaluationDashboard() {
                 )}
               </div>
 
-              {/* Footer */}
-              <div className="bg-slate-50 border-t border-slate-200 px-8 py-4 flex justify-between items-center text-xs text-slate-400">
-                <span>AuraGrade v2 • Batch Processing Engine</span>
-                <span>Job: {batchJobId} • {br.pages_graded as number} pages aggregated</span>
+              {/* Footer + Batch Export */}
+              <div className="bg-slate-50 border-t border-slate-200 px-8 py-4 flex flex-wrap justify-between items-center gap-3 text-xs text-slate-400">
+                <span>AuraGrade v2 • Batch ({br.pages_graded as number} pages) • Job: {batchJobId}</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const rows: ReportRow[] = questions.length > 0
+                        ? questions.map((q, i) => ({
+                            studentId: (br.registration_number as string) || "UNKNOWN",
+                            assessment: (q.label as string) || (q.question as string) || `Question ${i + 1}`,
+                            totalMarks: (q.score as number) ?? 0,
+                            maxMarks: (q.max_marks as number) || (q.max as number) || "?",
+                            confidence: br.confidence != null ? (Number(br.confidence) * 100) : undefined,
+                            feedback: feedback[i] || "",
+                            date: new Date().toLocaleDateString(),
+                          }))
+                        : [{
+                            studentId: (br.registration_number as string) || "UNKNOWN",
+                            assessment: "Batch Evaluation",
+                            totalMarks: br.score as number,
+                            maxMarks: br.max_marks as number,
+                            confidence: br.confidence != null ? (Number(br.confidence) * 100) : undefined,
+                            feedback: feedback.join("; "),
+                            date: new Date().toLocaleDateString(),
+                          }];
+                      downloadCSV(rows);
+                    }}
+                    className="px-3 py-1.5 bg-slate-200 text-slate-700 font-semibold rounded-lg hover:bg-slate-300 transition text-xs"
+                  >
+                    📥 CSV
+                  </button>
+                  <button
+                    onClick={() => {
+                      const rows: ReportRow[] = questions.length > 0
+                        ? questions.map((q, i) => ({
+                            studentId: (br.registration_number as string) || "UNKNOWN",
+                            assessment: (q.label as string) || (q.question as string) || `Question ${i + 1}`,
+                            totalMarks: (q.score as number) ?? 0,
+                            maxMarks: (q.max_marks as number) || (q.max as number) || "?",
+                            confidence: br.confidence != null ? (Number(br.confidence) * 100) : undefined,
+                            feedback: feedback[i] || "",
+                            date: new Date().toLocaleDateString(),
+                          }))
+                        : [{
+                            studentId: (br.registration_number as string) || "UNKNOWN",
+                            assessment: "Batch Evaluation",
+                            totalMarks: br.score as number,
+                            maxMarks: br.max_marks as number,
+                            confidence: br.confidence != null ? (Number(br.confidence) * 100) : undefined,
+                            feedback: feedback.join("; "),
+                            date: new Date().toLocaleDateString(),
+                          }];
+                      downloadPDF(rows, `Batch Report — ${(br.registration_number as string) || "Unknown"}`);
+                    }}
+                    className="px-3 py-1.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition text-xs"
+                  >
+                    📄 PDF Report
+                  </button>
+                </div>
               </div>
             </>
           );

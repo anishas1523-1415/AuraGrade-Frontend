@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import imageCompression from "browser-image-compression";
 import { motion, AnimatePresence } from "framer-motion";
+import { downloadCSV, downloadPDF, type ReportRow } from "@/lib/report-export";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -1003,6 +1004,47 @@ const GradingDashboard = () => {
                     >
                       Approve Grade
                     </Button>
+                  )}
+                  {score !== null && (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const asmt = assessments.find((a) => a.id === selectedAssessment);
+                          const row: ReportRow = {
+                            studentId: studentRegNo || "UNKNOWN",
+                            assessment: asmt ? `${asmt.subject} — ${asmt.title}` : "Assessment",
+                            totalMarks: score,
+                            maxMarks: "—",
+                            confidence: confidence != null ? confidence : undefined,
+                            feedback: feedback.join("; "),
+                            date: new Date().toLocaleDateString(),
+                          };
+                          downloadCSV([row]);
+                        }}
+                        className="border-white/10 text-slate-300 hover:bg-white/10 text-xs"
+                      >
+                        <FileText className="mr-1 h-3 w-3" /> CSV
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          const asmt = assessments.find((a) => a.id === selectedAssessment);
+                          const row: ReportRow = {
+                            studentId: studentRegNo || "UNKNOWN",
+                            assessment: asmt ? `${asmt.subject} — ${asmt.title}` : "Assessment",
+                            totalMarks: score,
+                            maxMarks: "—",
+                            confidence: confidence != null ? confidence : undefined,
+                            feedback: feedback.join("; "),
+                            date: new Date().toLocaleDateString(),
+                          };
+                          downloadPDF([row], `Grading Report — ${studentRegNo}`);
+                        }}
+                        className="bg-blue-600 hover:bg-blue-500 text-white text-xs shadow-lg shadow-blue-500/20"
+                      >
+                        <FileText className="mr-1 h-3 w-3" /> PDF
+                      </Button>
+                    </>
                   )}
                 </div>
               </div>
