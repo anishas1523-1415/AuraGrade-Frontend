@@ -155,7 +155,35 @@ const GradingDashboard = () => {
     setSelectedFile(file);
     // Revoke previous blob URL to prevent memory leak
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(URL.createObjectURL(file));
+
+    // ── Preview: handle PDFs by converting to image via backend ──
+    const isPdf =
+      file.type === "application/pdf" ||
+      file.name.toLowerCase().endsWith(".pdf");
+
+    if (isPdf) {
+      // PDF can't render as <img> — request backend conversion
+      setPreviewUrl(null); // clear while loading
+      try {
+        const pdfForm = new FormData();
+        pdfForm.append("file", file);
+        const pdfRes = await fetch(`${API_URL}/api/pdf-preview`, {
+          method: "POST",
+          body: pdfForm,
+        });
+        if (pdfRes.ok) {
+          const pdfData = await pdfRes.json();
+          if (pdfData.preview) {
+            setPreviewUrl(pdfData.preview); // data:image/jpeg;base64,...
+          }
+        }
+      } catch {
+        console.warn("⚠️ PDF preview conversion failed");
+      }
+    } else {
+      setPreviewUrl(URL.createObjectURL(file));
+    }
+
     setFeedback([]);
     setScore(null);
     setConfidence(null);
@@ -215,20 +243,26 @@ const GradingDashboard = () => {
     setCurrentPass(0);
 
     try {
-      // ── Client-side image compression ──────────────────────────
+      // ── Client-side image compression (skip for PDFs) ─────────
       let uploadFile: File = selectedFile;
-      try {
-        const compressed = await imageCompression(selectedFile, {
-          maxSizeMB: 0.5,
-          maxWidthOrHeight: 1920,
-          useWebWorker: true,
-        });
-        console.log(
-          `📦 Compressed: ${(selectedFile.size / 1024).toFixed(0)}KB → ${(compressed.size / 1024).toFixed(0)}KB`
-        );
-        uploadFile = compressed;
-      } catch (compErr) {
-        console.warn("⚠️ Compression failed, uploading original:", compErr);
+      const isPdfFile =
+        selectedFile.type === "application/pdf" ||
+        selectedFile.name.toLowerCase().endsWith(".pdf");
+
+      if (!isPdfFile) {
+        try {
+          const compressed = await imageCompression(selectedFile, {
+            maxSizeMB: 0.5,
+            maxWidthOrHeight: 1920,
+            useWebWorker: true,
+          });
+          console.log(
+            `📦 Compressed: ${(selectedFile.size / 1024).toFixed(0)}KB → ${(compressed.size / 1024).toFixed(0)}KB`
+          );
+          uploadFile = compressed;
+        } catch (compErr) {
+          console.warn("⚠️ Compression failed, uploading original:", compErr);
+        }
       }
 
       const formData = new FormData();
@@ -533,21 +567,37 @@ const GradingDashboard = () => {
   };
 
   const handleApprove = async () => {
-    if (!gradeId) return;
+    if (!gradeId) {
+      setFeedback((prev) => [...prev, "❌ Cannot approve — grade ID not available."]);
+      return;
+    }
     try {
-      const res = await authFetch(`${API_URL}/api/grades/${gradeId}/approve`, {
-        method: "PUT",
-      });
+      // Try authenticated fetch first, fall back to plain fetch if auth fails
+      let res: Response;
+      try {
+        res = await authFetch(`${API_URL}/api/grades/${gradeId}/approve`, {
+          method: "PUT",
+        });
+      } catch {
+        // Auth fetch failed (no session?) — try plain fetch
+        res = await fetch(`${API_URL}/api/grades/${gradeId}/approve`, {
+          method: "PUT",
+        });
+      }
       if (res.ok) {
         setProfStatus("Approved");
         setFeedback((prev) => [...prev, "✅ Grade approved by professor."]);
+        toast.success("Grade approved!");
       } else {
         const body = await res.json().catch(() => null);
         const detail = body?.detail || `Server error (${res.status})`;
-        setFeedback((prev) => [...prev, `❌ Failed to approve grade: ${detail}`]);
+        setFeedback((prev) => [...prev, `❌ Approve failed: ${detail}`]);
+        toast.error(`Approve failed: ${detail}`);
       }
-    } catch {
-      setFeedback((prev) => [...prev, "❌ Failed to approve grade."]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setFeedback((prev) => [...prev, `❌ Failed to approve grade: ${msg}`]);
+      toast.error("Failed to approve grade");
     }
   };
 
@@ -952,7 +1002,7 @@ const GradingDashboard = () => {
                 <div className="flex items-center gap-5">
                   {/* Confidence */}
                   <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.15em] text-white/30 mb-0.5">
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-white/50 mb-0.5">
                       Confidence
                     </p>
                     <p className={`text-base font-bold ${confidenceColor}`}>
@@ -964,7 +1014,7 @@ const GradingDashboard = () => {
 
                   {/* AI Marks */}
                   <div className="text-center">
-                    <p className="text-[9px] uppercase tracking-[0.15em] text-white/30 mb-0.5">
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-white/50 mb-0.5">
                       AI Marks
                     </p>
                     <p className="text-base font-bold text-blue-400">
@@ -992,7 +1042,7 @@ const GradingDashboard = () => {
                     <>
                       <div className="h-8 w-px bg-white/10" />
                       <div className="text-center">
-                        <p className="text-[9px] uppercase tracking-[0.15em] text-white/30 mb-0.5">
+                        <p className="text-[9px] uppercase tracking-[0.15em] text-white/50 mb-0.5">
                           Status
                         </p>
                         <p
@@ -1003,7 +1053,7 @@ const GradingDashboard = () => {
                                 ? "text-amber-400"
                                 : profStatus === "Overridden"
                                   ? "text-purple-400"
-                                  : "text-white/50"
+                                  : "text-cyan-300"
                           }`}
                         >
                           {profStatus}
@@ -1035,10 +1085,11 @@ const GradingDashboard = () => {
                   {!gradeId && score !== null && (
                     <Button
                       variant="outline"
-                      className="border-white/10 text-white/50 text-xs"
+                      className="border-white/20 text-white/60 text-xs"
                       disabled
+                      title="Grade not yet synced to database"
                     >
-                      Approve Grade
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Syncing…
                     </Button>
                   )}
                   {score !== null && (

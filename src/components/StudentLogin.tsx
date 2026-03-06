@@ -258,7 +258,7 @@ export const StudentLogin: React.FC<{
                 <Lock className="h-2.5 w-2.5" />
                 University Register Number
               </label>
-              <div className="relative">
+              <div className="relative" suppressHydrationWarning>
                 <input
                   ref={inputRef}
                   type="text"
@@ -270,6 +270,8 @@ export const StudentLogin: React.FC<{
                   placeholder="e.g. 21AD045"
                   className="w-full bg-black/50 border border-white/[0.08] rounded-2xl py-5 px-6 text-xl font-mono font-bold text-white placeholder:text-white/[0.08] outline-none focus:border-cyan-500/40 focus:shadow-[0_0_20px_rgba(6,182,212,0.08)] transition-all pr-14"
                   disabled={isSearching}
+                  suppressHydrationWarning
+                  autoComplete="off"
                 />
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 p-2">
                   <Fingerprint

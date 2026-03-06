@@ -85,19 +85,6 @@ export default function StudentDashboard() {
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /* ── Show StudentLogin gateway until student is identified ── */
-  if (!student) {
-    return (
-      <StudentLogin
-        onAuthenticated={(s, g) => {
-          setStudent(s);
-          setGrades(g);
-          setSearched(true);
-        }}
-      />
-    );
-  }
-
   /* ---------- Fetch student grades (re-search) ---------- */
   const handleSearch = useCallback(async () => {
     if (!regNo.trim()) return;
@@ -138,6 +125,19 @@ export default function StudentDashboard() {
     grades.length > 0
       ? Math.round((grades.reduce((sum, g) => sum + g.ai_score, 0) / grades.length) * 10) / 10
       : 0;
+
+  /* ── Show StudentLogin gateway until student is identified ── */
+  if (!student) {
+    return (
+      <StudentLogin
+        onAuthenticated={(s, g) => {
+          setStudent(s);
+          setGrades(g);
+          setSearched(true);
+        }}
+      />
+    );
+  }
   const approvedCount = grades.filter((g) => g.prof_status === "Approved").length;
   const flaggedCount = grades.filter((g) => g.is_flagged).length;
 
