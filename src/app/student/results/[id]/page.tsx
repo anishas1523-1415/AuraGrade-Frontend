@@ -402,7 +402,7 @@ export default function StudentResultPage() {
                 </h3>
               </div>
 
-              <ScrollArea className="max-h-[420px]">
+              <ScrollArea className="h-[420px]">
                 <div className="p-5 space-y-3">
                   <AnimatePresence>
                     {(grade.feedback || []).map((point, i) => {

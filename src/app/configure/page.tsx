@@ -27,6 +27,8 @@ import {
   Image as ImageIcon,
   LogIn,
   Shield,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import Link from "next/link";
 import { UserBadge } from "@/components/UserBadge";
@@ -119,6 +121,95 @@ export default function RubricUploadPage() {
     message: string;
   } | null>(null);
   const [creatingAssessment, setCreatingAssessment] = useState(false);
+
+  // Voice dictation state
+  const [isListening, setIsListening] = useState(false);
+  const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const recognitionRef = useRef<ReturnType<typeof Object> | null>(null);
+
+  /* ---------- Voice-to-Rubric dictation ---------- */
+  const startDictation = () => {
+    const SpeechRecognitionAPI =
+      (window as unknown as Record<string, unknown>).SpeechRecognition ||
+      (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      setSyncResult({ success: false, message: "Your browser doesn't support voice dictation. Use Chrome." });
+      return;
+    }
+
+    if (isListening && recognitionRef.current) {
+      (recognitionRef.current as { stop: () => void }).stop();
+      setIsListening(false);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition = new (SpeechRecognitionAPI as any)();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => setIsListening(true);
+
+    recognition.onresult = async (event: { results: { 0: { 0: { transcript: string } } } }) => {
+      const transcript = event.results[0][0].transcript;
+      setIsListening(false);
+      setVoiceProcessing(true);
+      setSyncResult(null);
+
+      console.log("Captured Voice:", transcript);
+
+      try {
+        // Send the voice text to Gemini via Next.js API route
+        const res = await fetch("/api/generate-rubric", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const criteria = (data.criteria || []) as Array<{ criteria: string; max_marks: number; marks?: number; description: string }>;
+          if (criteria.length > 0) {
+            // Normalize: some responses use "marks" instead of "max_marks"
+            const normalized = criteria.map((c) => ({
+              criteria: c.criteria,
+              max_marks: c.max_marks ?? c.marks ?? 0,
+              description: c.description || "",
+            }));
+            // Append to existing rubric items (replace empty first row)
+            const hasEmptyFirst = rubricItems.length === 1 && !rubricItems[0].criteria.trim();
+            setRubricItems(hasEmptyFirst ? normalized : [...rubricItems, ...normalized]);
+            setSyncResult({
+              success: true,
+              message: `Voice captured! ${data.questions_detected} criteria extracted (${data.total_marks} marks total).`,
+            });
+          } else {
+            setSyncResult({ success: false, message: "AI couldn't extract criteria from your dictation. Try again." });
+          }
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setSyncResult({ success: false, message: (err as { error?: string }).error || "Voice-to-rubric failed" });
+        }
+      } catch (err) {
+        setSyncResult({
+          success: false,
+          message: err instanceof Error ? err.message : "Voice processing failed",
+        });
+      } finally {
+        setVoiceProcessing(false);
+      }
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      setSyncResult({ success: false, message: "Microphone error — check browser permissions." });
+    };
+
+    recognition.onend = () => setIsListening(false);
+
+    recognition.start();
+  };
 
   /* ---------- Load assessments ---------- */
   useEffect(() => {
@@ -833,13 +924,37 @@ export default function RubricUploadPage() {
                 </div>
 
                 {/* Add criteria button */}
-                <Button
-                  onClick={addCriteria}
-                  variant="outline"
-                  className="w-full border-dashed border-white/10 text-white/40 hover:bg-white/5 hover:text-white/60"
-                >
-                  <Plus className="w-4 h-4 mr-2" /> Add Marking Criteria
-                </Button>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={addCriteria}
+                    variant="outline"
+                    className="flex-1 border-dashed border-white/10 text-white/40 hover:bg-white/5 hover:text-white/60"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> Add Marking Criteria
+                  </Button>
+
+                  {/* Voice Dictation Button */}
+                  <Button
+                    onClick={startDictation}
+                    disabled={voiceProcessing}
+                    variant="outline"
+                    className={`border-dashed transition-all ${
+                      isListening
+                        ? "border-red-500/40 bg-red-500/10 text-red-400 animate-pulse"
+                        : voiceProcessing
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                          : "border-cyan-500/20 text-cyan-400/70 hover:bg-cyan-500/5 hover:text-cyan-400"
+                    }`}
+                  >
+                    {isListening ? (
+                      <><MicOff className="w-4 h-4 mr-2" /> Listening…</>
+                    ) : voiceProcessing ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Converting…</>
+                    ) : (
+                      <><Mic className="w-4 h-4 mr-2" /> Dictate Rubric with AI</>
+                    )}
+                  </Button>
+                </div>
 
                 {/* Total marks summary */}
                 {totalMarks > 0 && (

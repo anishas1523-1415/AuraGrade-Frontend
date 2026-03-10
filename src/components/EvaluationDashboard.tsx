@@ -99,6 +99,10 @@ interface EvaluationData {
   audit_notes: string;
   diagram_analysis: DiagramAnalysis;
   confidence?: number;
+  confidence_score?: number;
+  human_review_required?: boolean;
+  sentinel_triggered?: boolean;
+  max_similarity_score?: number;
   pass1_score?: number;
   pass2_score?: number;
   deterministic_score?: number;
@@ -866,6 +870,39 @@ export default function EvaluationDashboard() {
                 {evaluationData.confidence !== undefined && (
                   <div className="text-xs text-slate-500 font-mono text-right">
                     AI Confidence: {(evaluationData.confidence * 100).toFixed(1)}%
+                    {evaluationData.confidence_score !== undefined && (
+                      <span className="ml-2">(Score: {evaluationData.confidence_score}%)</span>
+                    )}
+                  </div>
+                )}
+
+                {/* Human Review Required Badge */}
+                {evaluationData.human_review_required && (
+                  <div className="flex items-center gap-2 mt-2 bg-red-50 border border-red-300 rounded-xl px-4 py-3">
+                    <span className="text-xl">⚠️</span>
+                    <div>
+                      <p className="text-red-800 font-bold text-sm">Requires Human Review</p>
+                      <p className="text-red-600 text-xs">
+                        AI confidence is below 80% — this script has been flagged for manual verification to ensure grading accuracy.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Similarity Sentinel Warning Badge */}
+                {evaluationData.sentinel_triggered && (
+                  <div className="flex items-center gap-2 mt-2 bg-orange-50 border border-orange-400 rounded-xl px-4 py-3 shadow-[0_0_15px_rgba(249,115,22,0.1)]">
+                    <svg className="w-5 h-5 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <div>
+                      <p className="text-orange-800 font-bold text-sm">
+                        SENTINEL TRIGGERED: {evaluationData.max_similarity_score}% MATCH
+                      </p>
+                      <p className="text-orange-600 text-xs">
+                        This submission has suspiciously high similarity to another graded script. Flagged for plagiarism review.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

@@ -89,6 +89,10 @@ const GradingDashboard = () => {
   const [feedback, setFeedback] = useState<string[]>([]);
   const [score, setScore] = useState<number | null>(null);
   const [confidence, setConfidence] = useState<number | null>(null);
+  const [confidenceScore, setConfidenceScore] = useState<number | null>(null);
+  const [humanReviewRequired, setHumanReviewRequired] = useState(false);
+  const [sentinelTriggered, setSentinelTriggered] = useState(false);
+  const [maxSimilarityScore, setMaxSimilarityScore] = useState<number>(0);
   const [isFlagged, setIsFlagged] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -187,6 +191,10 @@ const GradingDashboard = () => {
     setFeedback([]);
     setScore(null);
     setConfidence(null);
+    setConfidenceScore(null);
+    setHumanReviewRequired(false);
+    setSentinelTriggered(false);
+    setMaxSimilarityScore(0);
     setIsFlagged(false);
     setError(null);
     setIsGrading(false);
@@ -234,6 +242,10 @@ const GradingDashboard = () => {
     setFeedback([]);
     setScore(null);
     setConfidence(null);
+    setConfidenceScore(null);
+    setHumanReviewRequired(false);
+    setSentinelTriggered(false);
+    setMaxSimilarityScore(0);
     setIsFlagged(false);
     setError(null);
     setGradeId(null);
@@ -400,13 +412,28 @@ const GradingDashboard = () => {
         const s = payload.score as number;
         const c = payload.confidence as number;
         const flagged = payload.is_flagged as boolean;
+        const cscore = (payload.confidence_score as number) ?? null;
+        const hrr = (payload.human_review_required as boolean) ?? false;
         setScore(s);
         setConfidence(c);
+        setConfidenceScore(cscore);
+        setHumanReviewRequired(hrr);
         setIsFlagged(flagged);
         setFeedback((prev) => [
           ...prev,
           `💯 Final Score: ${s}/10`,
         ]);
+        if (hrr) {
+          setFeedback((prev) => [
+            ...prev,
+            `⚠️ Confidence ${cscore ?? Math.round(c * 100)}% — flagged for human review.`,
+          ]);
+        }
+        // Sentinel data from result
+        if (payload.sentinel_triggered) {
+          setSentinelTriggered(true);
+          setMaxSimilarityScore((payload.max_similarity_score as number) ?? 0);
+        }
         if (payload.self_corrected) {
           setFeedback((prev) => [
             ...prev,
@@ -418,6 +445,20 @@ const GradingDashboard = () => {
             ...prev,
             "🚩 Flagged for manual review.",
           ]);
+        }
+        break;
+      }
+
+      case "sentinel": {
+        if (payload.sentinel_triggered) {
+          setSentinelTriggered(true);
+          setMaxSimilarityScore((payload.max_similarity_score as number) ?? 0);
+          setFeedback((prev) => [
+            ...prev,
+            `🚨 SENTINEL: ${payload.max_similarity_score}% match detected — plagiarism risk!`,
+          ]);
+        } else {
+          setFeedback((prev) => [...prev, "✅ Sentinel clear — no plagiarism detected."]);
         }
         break;
       }
@@ -1032,6 +1073,36 @@ const GradingDashboard = () => {
                         </p>
                         <p className="text-sm font-bold text-amber-400 flex items-center gap-1">
                           <AlertTriangle className="h-3 w-3" /> Review
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Human Review Required indicator */}
+                  {humanReviewRequired && (
+                    <>
+                      <div className="h-8 w-px bg-white/10" />
+                      <div className="text-center">
+                        <p className="text-[9px] uppercase tracking-[0.15em] text-red-300/60 mb-0.5">
+                          AI Confidence
+                        </p>
+                        <p className="text-sm font-bold text-red-400 flex items-center gap-1 animate-pulse">
+                          <ShieldAlert className="h-3.5 w-3.5" /> Requires Human Review
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Similarity Sentinel Warning */}
+                  {sentinelTriggered && (
+                    <>
+                      <div className="h-8 w-px bg-white/10" />
+                      <div className="text-center">
+                        <p className="text-[9px] uppercase tracking-[0.15em] text-orange-300/60 mb-0.5">
+                          Sentinel
+                        </p>
+                        <p className="text-sm font-bold text-orange-400 flex items-center gap-1 animate-pulse">
+                          <Shield className="h-3.5 w-3.5" /> {maxSimilarityScore}% MATCH
                         </p>
                       </div>
                     </>
