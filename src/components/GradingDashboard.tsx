@@ -348,6 +348,8 @@ const GradingDashboard = () => {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
       setFeedback((prev) => [...prev, `❌ Error: ${message}`]);
+    } finally {
+      setIsGrading(false);
     }
   };
 
@@ -483,6 +485,15 @@ const GradingDashboard = () => {
               : studentRegNo
             : "Student";
           toast.success(`Grade for ${studentLabel} synced to Supabase!`);
+        } else {
+          setSavedToDb(false);
+          setGradeId(null);
+          const reason = (payload.reason as string) || "Missing student or assessment mapping";
+          setFeedback((prev) => [
+            ...prev,
+            `⚠️ Grade not saved to DB: ${reason}. Approve requires a saved grade record.`,
+          ]);
+          toast.error("Grade not saved to DB — approve unavailable");
         }
         break;
 
