@@ -8,8 +8,8 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import * as SecureStore from "expo-secure-store";
 import { supabase } from "../lib/supabase";
-import { authFetch } from "../lib/api";
 
 interface LoginScreenProps {
   onLoginSuccess: () => Promise<void>;
@@ -18,48 +18,20 @@ interface LoginScreenProps {
 export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [dob, setDob] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const normalizeDobInput = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    const normalized = trimmed.replace(/[./]/g, "-");
-    const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (isoMatch) {
-      return normalized;
-    }
-
-    const dmyMatch = normalized.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-    if (dmyMatch) {
-      const [, day, month, year] = dmyMatch;
-      return `${year}-${month}-${day}`;
-    }
-
-    return null;
-  };
 
   const handleLogin = async () => {
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedDob = normalizeDobInput(dob);
 
     if (!normalizedEmail || !password.trim()) {
-      Alert.alert("Login Required", "Enter email and password.");
-      return;
-    }
-
-    if (dob.trim() && !normalizedDob) {
-      Alert.alert("Invalid DOB", "Use DOB as YYYY-MM-DD or DD-MM-YYYY.");
+      Alert.alert("Error", "Please enter both institutional email and password.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
       });
@@ -68,20 +40,15 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         throw error;
       }
 
-      const verifyRes = await authFetch("/api/auth/verify-student-dob", {
-        method: "POST",
-        body: JSON.stringify({ dob: normalizedDob || "" }),
-      });
-
-      if (!verifyRes.ok) {
-        const verifyPayload = await verifyRes.json().catch(() => ({}));
-        await supabase.auth.signOut();
-        throw new Error(verifyPayload?.detail || "DOB verification failed.");
+      if (data.session) {
+        // Explicitly vault tokens for downstream flows that need direct token access.
+        await SecureStore.setItemAsync("access_token", data.session.access_token);
+        await SecureStore.setItemAsync("refresh_token", data.session.refresh_token);
       }
 
       await onLoginSuccess();
     } catch (error: any) {
-      Alert.alert("Login Failed", error?.message || "Unable to sign in.");
+      Alert.alert("Authentication Failed", error?.message || "Unable to sign in.");
     } finally {
       setLoading(false);
     }
@@ -112,26 +79,16 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         placeholderTextColor="#94A3B8"
       />
 
-      <TextInput
-        style={[styles.input, { marginTop: 10 }]}
-        value={dob}
-        onChangeText={setDob}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="DOB (YYYY-MM-DD or DD-MM-YYYY)"
-        placeholderTextColor="#94A3B8"
-      />
-
       <TouchableOpacity
         style={[styles.button, loading && { opacity: 0.7 }]}
         onPress={handleLogin}
         activeOpacity={0.85}
         disabled={loading}
       >
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Continue</Text>}
+        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Authenticate</Text>}
       </TouchableOpacity>
 
-      <Text style={styles.hint}>Students: add DOB. Staff: DOB optional.</Text>
+      <Text style={styles.hint}>Secure institutional access via Supabase.</Text>
     </View>
   );
 }
